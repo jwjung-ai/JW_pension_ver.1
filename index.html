@@ -289,8 +289,9 @@
 
         function openModal(rowId = null, defaultRoom = null, defaultDate = null) {
             document.getElementById('reservationModal').style.display = 'flex';
-            if (rowId !== null) {
-                const r = reservations.find((item, idx) => (item.rowId ? item.rowId === rowId : idx === rowId));
+            if (rowId !== null && rowId !== undefined && rowId !== '') {
+                const r = reservations.find((item, idx) => (item.rowId !== undefined ? item.rowId == rowId : idx == rowId));
+                if (!r) return;
                 document.getElementById('modalTitle').innerText = '예약 정보 수정';
                 document.getElementById('editRowId').value = rowId;
                 document.getElementById('roomName').value = r.roomName;
@@ -353,7 +354,7 @@
                         method: 'POST',
                         body: JSON.stringify({
                             action: rowId === "" ? "create" : "update",
-                            rowId: rowId ? Number(rowId) : null,
+                            rowId: rowId !== "" ? Number(rowId) : null,
                             ...data
                         })
                     });
@@ -366,36 +367,51 @@
                     saveBtn.disabled = false;
                 }
             } else {
-                if (rowId === "") reservations.push(data);
-                else reservations[rowId] = data;
+                if (rowId === "") {
+                    data.rowId = reservations.length > 0 ? Math.max(...reservations.map(r => r.rowId || 0)) + 1 : 1;
+                    reservations.push(data);
+                } else {
+                    const idx = reservations.findIndex(item => (item.rowId !== undefined ? item.rowId == rowId : item.originalIndex == rowId));
+                    if (idx !== -1) {
+                        data.rowId = reservations[idx].rowId;
+                        reservations[idx] = data;
+                    }
+                }
                 localStorage.setItem('pension_reservations_v10', JSON.stringify(reservations));
                 closeModal();
                 renderAll();
             }
         }
 
-        async function deleteReservation(rowId) {
+        async function deleteReservation(targetId) {
             if (confirm('이 예약을 정말 삭제하시겠습니까?')) {
                 if (GOOGLE_SCRIPT_URL && !GOOGLE_SCRIPT_URL.includes("YOUR_GOOGLE_APPS_SCRIPT_URL_HERE")) {
                     try {
                         await fetch(GOOGLE_SCRIPT_URL, {
                             method: 'POST',
-                            body: JSON.stringify({ action: "delete", rowId: Number(rowId) })
+                            body: JSON.stringify({ action: "delete", rowId: Number(targetId) })
                         });
                         await fetchReservations();
                     } catch (error) {
                         alert("삭제 실패: " + error);
                     }
                 } else {
-                    reservations.splice(rowId, 1);
+                    // 로컬스토리지 모드: rowId 또는 배열 인덱스로 정확히 찾아 제거
+                    const idx = reservations.findIndex(item => (item.rowId !== undefined ? item.rowId == targetId : item === targetId));
+                    if (idx !== -1) {
+                        reservations.splice(idx, 1);
+                    } else if (typeof targetId === 'number' && targetId < reservations.length) {
+                        reservations.splice(targetId, 1);
+                    }
                     localStorage.setItem('pension_reservations_v10', JSON.stringify(reservations));
                     renderAll();
                 }
             }
         }
 
-        async function togglePaymentStatus(rowId) {
-            const index = typeof rowId === 'number' ? rowId : reservations.findIndex(r => r.rowId === rowId);
+        async function togglePaymentStatus(targetId) {
+            const index = reservations.findIndex(item => (item.rowId !== undefined ? item.rowId == targetId : item.originalIndex == targetId));
+            if (index === -1) return;
             const r = reservations[index];
             const newStatus = r.paymentStatus === '완료' ? '미결제' : '완료';
 
@@ -405,7 +421,7 @@
                         method: 'POST',
                         body: JSON.stringify({
                             action: "update",
-                            rowId: Number(rowId),
+                            rowId: Number(targetId),
                             ...r,
                             checkIn: formatDate(r.checkIn),
                             checkOut: formatDate(r.checkOut),
@@ -591,11 +607,11 @@
                 tbody.innerHTML = `<tr><td colspan="7" class="p-8 text-center text-slate-400">등록된 예약 내역이 없습니다.</td></tr>`;
             } else {
                 list.forEach(r => {
-                    const rowOrIdx = r.rowId !== undefined ? r.rowId : r.originalIndex;
+                    const identifier = r.rowId !== undefined ? r.rowId : r.originalIndex;
                     const isPaid = r.paymentStatus === '완료';
                     const paymentBadge = isPaid 
-                        ? `<button onclick="togglePaymentStatus(${rowOrIdx})" class="bg-emerald-100 text-emerald-700 px-2.5 py-1 rounded-full text-xs font-semibold hover:bg-emerald-200 transition">결제완료</button>`
-                        : `<button onclick="togglePaymentStatus(${r.originalIndex})" class="bg-amber-100 text-amber-700 px-2.5 py-1 rounded-full text-xs font-semibold hover:bg-amber-200 transition">미결제(클릭시변경)</button>`;
+                        ? `<button onclick="togglePaymentStatus(${identifier})" class="bg-emerald-100 text-emerald-700 px-2.5 py-1 rounded-full text-xs font-semibold hover:bg-emerald-200 transition">결제완료</button>`
+                        : `<button onclick="togglePaymentStatus(${identifier})" class="bg-amber-100 text-amber-700 px-2.5 py-1 rounded-full text-xs font-semibold hover:bg-amber-200 transition">미결제(클릭시변경)</button>`;
 
                     const timeBadge = (r.checkInTimeType === '오전')
                         ? `<span class="bg-amber-100 text-amber-800 text-[11px] px-1.5 py-0.5 rounded-md font-semibold">☀️ 오전입실</span>`
@@ -622,8 +638,8 @@
                         </td>
                         <td class="p-4">${memoDisplay}</td>
                         <td class="p-4 text-center">
-                            <button onclick="openModal(${rowOrIdx})" class="text-indigo-600 hover:text-indigo-800 mr-3 font-medium text-xs">수정</button>
-                            <button onclick="deleteReservation(${rowOrIdx})" class="text-rose-500 hover:text-rose-700 font-medium text-xs">삭제</button>
+                            <button onclick="openModal(${identifier})" class="text-indigo-600 hover:text-indigo-800 mr-3 font-medium text-xs">수정</button>
+                            <button onclick="deleteReservation(${identifier})" class="text-rose-500 hover:text-rose-700 font-medium text-xs">삭제</button>
                         </td>
                     `;
                     tbody.appendChild(tr);
